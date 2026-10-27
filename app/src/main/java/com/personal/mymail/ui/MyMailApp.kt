@@ -1,6 +1,7 @@
 package com.personal.mymail.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -9,7 +10,11 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 
 @Composable
-fun MyMailApp(vm: MailViewModel = viewModel()) {
+fun MyMailApp(
+    openMessageId: Long = -1L,
+    onOpenHandled: () -> Unit = {},
+    vm: MailViewModel = viewModel()
+) {
     val nav = rememberNavController()
 
     NavHost(navController = nav, startDestination = "inbox") {
@@ -19,11 +24,20 @@ fun MyMailApp(vm: MailViewModel = viewModel()) {
         composable("accounts") {
             AccountsScreen(vm, nav)
         }
+        composable("settings") {
+            SettingsScreen(nav)
+        }
         composable(
             "account/{id}",
             arguments = listOf(navArgument("id") { type = NavType.LongType })
         ) { entry ->
             AccountEditScreen(vm, nav, entry.arguments?.getLong("id") ?: 0L)
+        }
+        composable(
+            "folders/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.LongType })
+        ) { entry ->
+            FoldersScreen(vm, nav, entry.arguments?.getLong("id") ?: 0L)
         }
         composable(
             "message/{id}",
@@ -32,20 +46,24 @@ fun MyMailApp(vm: MailViewModel = viewModel()) {
             MessageScreen(vm, nav, entry.arguments?.getLong("id") ?: 0L)
         }
         composable(
-            "compose?account={account}&to={to}&subject={subject}",
+            "compose?mode={mode}&msg={msg}",
             arguments = listOf(
-                navArgument("account") { type = NavType.LongType; defaultValue = -1L },
-                navArgument("to") { type = NavType.StringType; defaultValue = "" },
-                navArgument("subject") { type = NavType.StringType; defaultValue = "" }
+                navArgument("mode") { type = NavType.StringType; defaultValue = "new" },
+                navArgument("msg") { type = NavType.LongType; defaultValue = -1L }
             )
         ) { entry ->
             ComposeScreen(
                 vm = vm,
                 nav = nav,
-                presetAccount = entry.arguments?.getLong("account") ?: -1L,
-                presetTo = entry.arguments?.getString("to") ?: "",
-                presetSubject = entry.arguments?.getString("subject") ?: ""
+                mode = entry.arguments?.getString("mode") ?: "new",
+                messageId = entry.arguments?.getLong("msg") ?: -1L
             )
         }
+    }
+
+    // Opens the message when the user taps a new-mail notification.
+    LaunchedEffect(openMessageId) {
+        if (openMessageId > 0L) nav.navigate("message/$openMessageId")
+        if (openMessageId != -1L) onOpenHandled()
     }
 }

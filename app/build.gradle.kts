@@ -67,6 +67,9 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
 
+    // Background sync
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+
     // Encrypted storage for passwords
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 

@@ -7,31 +7,37 @@ combined inbox, and send mail through each account's SMTP server. Built for side
 ## What it does
 
 - Multiple accounts, IMAP or POP3, with SSL, STARTTLS or no encryption
-- One combined inbox with a filter chip for each account
-- Downloads the newest 40 messages per account each time you refresh (also on app start)
-- Reads plain-text and HTML mail (HTML is shown as plain text; attachments are ignored)
-- Write and reply, sending through the account you pick
+- One combined inbox, with a filter for each account
+- **Folders (IMAP):** pick which folders to download (Sent, Drafts, Archive, and so on) from
+  Accounts > the folder button next to an account. Inbox and Sent are on by default.
+- **Background sync and notifications:** new mail is checked for automatically (every 15 minutes
+  to 2 hours, your choice in Settings) and you get a notification. Tapping it opens the message.
+- **Attachments:** received attachments are listed on the message; Open or Save them. You can
+  attach files when writing (paperclip button in the top bar).
+- **Reply, Reply all and Forward**, with the original quoted. Forward includes the original
+  attachments. Replies are threaded correctly in other mail apps.
+- Cc and Bcc
+- Sent mail is also saved to your Sent folder on IMAP accounts (Gmail does this by itself)
 - Passwords are stored encrypted on the phone (Android Keystore)
 - Nothing is ever deleted on your mail server
 
 ## Getting the APK without installing anything (GitHub, free)
 
-1. Make a free account at github.com and create a new **private** repository, for example `mymail`.
-2. Click **Add file > Upload files** and drag in everything from this folder (keep the folder
-   structure, including the hidden `.github` folder). Commit.
-3. Open the **Actions** tab. The **Build APK** workflow starts by itself (or click it, then
-   **Run workflow**). It takes about 5 to 8 minutes.
-4. When it finishes, open the run and download **MyMail-debug-apk** at the bottom. Unzip it to get
-   `app-debug.apk`.
+The repository already contains a build workflow. Every time the code is updated:
 
-If the build fails, open the failed step, copy the red error text, and send it to me. First builds
-of a new project often need a small fix.
+1. Open the **Actions** tab of the repository.
+2. Open the newest **Build APK** run (about 5 to 8 minutes).
+3. When it is green, download **MyMail-debug-apk** from the bottom of the page and unzip it to get
+   `app-debug.apk`.
 
 ## Installing on your phone
 
 1. Get `app-debug.apk` onto the phone (email it to yourself, Google Drive, or USB).
 2. Tap it. Android will ask to allow installs from that app (Files, Chrome, Drive); allow it.
-3. Open MyMail, tap **Add account**.
+3. Open MyMail. Updating over an existing install keeps your accounts and downloaded mail.
+   (If an update ever fails to install, uninstall the app first, which means adding accounts again.)
+
+When the app asks to send notifications, choose Allow.
 
 ## Adding accounts
 
@@ -49,17 +55,20 @@ of a new project often need a small fix.
 | Yahoo | imap.mail.yahoo.com, 993 SSL | pop.mail.yahoo.com, 995 SSL | smtp.mail.yahoo.com, 465 SSL |
 | iCloud | imap.mail.me.com, 993 SSL | n/a | smtp.mail.me.com, 587 STARTTLS |
 
-## Known limits of this first version
+## Things to know
 
-- No background sync or notifications; mail is fetched when you open the app or tap refresh
-- Only the inbox folder; no sent, drafts or folders
-- No attachments (can't view or send them)
-- Messages are read-only copies; you can't delete or archive from the app yet
-- This is a debug build, which is fine for personal use. It is signed with a debug key, so
-  installing a build from a different computer or repository later may require uninstalling first.
+- Background checks are scheduled by Android. They run at most as often as you choose, but battery
+  saver and Doze mode can delay them, so mail may sometimes show up late. This is not push email.
+- Each refresh downloads the newest 40 messages per enabled folder. With IMAP, attachments are only
+  downloaded when you open or save them. With POP3, the whole message is downloaded.
+- POP3 accounts only have an inbox (that is how POP3 works).
+- HTML mail is shown as plain text. Pictures inside messages are not shown.
+- You can't delete, archive or move messages from the app yet, and drafts are not saved.
+- This is a debug build, which is fine for personal use.
 
 ## Project layout
 
-- `data/` database (Room), encrypted password storage, repository
-- `mail/MailEngine.kt` all IMAP, POP3 and SMTP code (Jakarta/JavaMail for Android)
+- `data/` database (Room), encrypted password storage, settings, repository
+- `mail/MailEngine.kt` all IMAP, POP3 and SMTP code (JavaMail for Android)
+- `sync/` background checks and notifications (WorkManager)
 - `ui/` the screens (Jetpack Compose)

@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -86,8 +87,15 @@ fun AccountsScreen(vm: MailViewModel, nav: NavHostController) {
                         headlineContent = { Text(acc.displayName.ifBlank { acc.email }) },
                         supportingContent = { Text("${acc.email} · ${acc.protocol}") },
                         trailingContent = {
-                            IconButton(onClick = { toDelete = acc }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove account")
+                            Row {
+                                if (acc.protocol == "IMAP") {
+                                    IconButton(onClick = { nav.navigate("folders/${acc.id}") }) {
+                                        Icon(Icons.Default.Folder, contentDescription = "Choose folders")
+                                    }
+                                }
+                                IconButton(onClick = { toDelete = acc }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Remove account")
+                                }
                             }
                         },
                         modifier = Modifier.clickable { nav.navigate("account/${acc.id}") }

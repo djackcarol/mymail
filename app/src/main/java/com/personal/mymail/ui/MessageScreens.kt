@@ -1,29 +1,34 @@
 package com.personal.mymail.ui
 
-import android.net.Uri
-import androidx.compose.foundation.horizontalScroll
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Reply
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,29 +36,86 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.content.FileProvider
 import androidx.navigation.NavHostController
+import com.personal.mymail.data.AttachmentInfo
 import com.personal.mymail.data.MailMessage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-
-// ---------------------------------------------------------------------------
-// Reading a message
-// ---------------------------------------------------------------------------
+import kotlinx.coroutines.withContext
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MessageScreen(vm: MailViewModel, nav: NavHostController, messageId: Long) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+
     var message by remember { mutableStateOf<MailMessage?>(null) }
+    var attachments by remember { mutableStateOf<List<AttachmentInfo>>(emptyList()) }
+    var busyId by remember { mutableStateOf<Long?>(null) }
+    var pendingSave by remember { mutableStateOf<File?>(null) }
 
     LaunchedEffect(messageId) {
         message = vm.repo.getMessage(messageId)
+        attachments = vm.repo.attachments(messageId)
         vm.repo.markRead(messageId)
+    }
+
+    val saveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("*/*")
+    ) { uri ->
+        val file = pendingSave
+        pendingSave = null
+        if (uri != null && file != null) {
+            scope.launch {
+                val saved = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            file.inputStream().use { it.copyTo(out) }
+                        }
+                    }.isSuccess
+                }
+                snackbar.showSnackbar(if (saved) "Saved" else "Couldn't save the file")
+            }
+        }
+    }
+
+    /** Downloads the attachment (if needed), then runs [action] with the local file. */
+    fun withFile(attachment: AttachmentInfo, action: (File) -> Unit) {
+        scope.launch {
+            busyId = attachment.id
+            val result = vm.repo.downloadAttachment(attachment)
+            busyId = null
+            val file = result.getOrNull()
+            if (file != null) {
+                action(file)
+            } else {
+                snackbar.showSnackbar(
+                    "Couldn't download: ${result.exceptionOrNull()?.message ?: "unknown error"}"
+                )
+            }
+        }
+    }
+
+    fun openFile(file: File, mime: String) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, mime)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        try {
+            context.startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            scope.launch {
+                snackbar.showSnackbar("No app on this phone can open that kind of file. Try Save.")
+            }
+        }
     }
 
     Scaffold(
@@ -64,172 +126,115 @@ fun MessageScreen(vm: MailViewModel, nav: NavHostController, messageId: Long) {
                     IconButton(onClick = { nav.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                },
-                actions = {
-                    message?.let { m ->
-                        IconButton(onClick = {
-                            val subject = if (m.subject.startsWith("Re:", ignoreCase = true)) m.subject
-                            else "Re: ${m.subject}"
-                            nav.navigate(
-                                "compose?account=${m.accountId}" +
-                                    "&to=${Uri.encode(m.fromAddress)}" +
-                                    "&subject=${Uri.encode(subject)}"
-                            )
-                        }) {
-                            Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = "Reply")
-                        }
-                    }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
         val m = message
         if (m == null) {
             Text("Loading…", modifier = Modifier.padding(padding).padding(16.dp))
-        } else {
-            Column(
-                Modifier.padding(padding).fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp)
-            ) {
-                SelectionContainer {
-                    Column {
-                        Text(m.subject, style = MaterialTheme.typography.titleLarge)
+            return@Scaffold
+        }
+
+        val recipientCount = extractEmails(m.toAddresses).size + extractEmails(m.ccAddresses).size
+
+        Column(
+            Modifier.padding(padding).fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+        ) {
+            SelectionContainer {
+                Column {
+                    Text(m.subject, style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "${m.fromName} <${m.fromAddress}>",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    if (m.toAddresses.isNotBlank()) {
                         Text(
-                            "${m.fromName} <${m.fromAddress}>",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(top = 8.dp)
-                        )
-                        Text(
-                            formatFullDate(m.date),
+                            "To: ${m.toAddresses}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        HorizontalDivider(Modifier.padding(vertical = 12.dp))
-                        Text(m.body, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (m.ccAddresses.isNotBlank()) {
+                        Text(
+                            "Cc: ${m.ccAddresses}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        formatFullDate(m.date),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Row(
+                Modifier.padding(top = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(onClick = { nav.navigate("compose?mode=reply&msg=${m.id}") }) {
+                    Text("Reply")
+                }
+                if (recipientCount > 1) {
+                    OutlinedButton(onClick = { nav.navigate("compose?mode=replyall&msg=${m.id}") }) {
+                        Text("Reply all")
+                    }
+                }
+                OutlinedButton(onClick = { nav.navigate("compose?mode=forward&msg=${m.id}") }) {
+                    Text("Forward")
+                }
+            }
+
+            if (attachments.isNotEmpty()) {
+                HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                Text("Attachments", style = MaterialTheme.typography.titleSmall)
+                attachments.forEach { att ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.AttachFile, contentDescription = null)
+                        Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                            Text(att.name, maxLines = 1)
+                            val size = formatSize(att.size)
+                            if (size.isNotEmpty()) {
+                                Text(
+                                    size,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        if (busyId == att.id) {
+                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                        } else {
+                            TextButton(
+                                enabled = busyId == null,
+                                onClick = { withFile(att) { file -> openFile(file, att.mimeType) } }
+                            ) { Text("Open") }
+                            TextButton(
+                                enabled = busyId == null,
+                                onClick = {
+                                    withFile(att) { file ->
+                                        pendingSave = file
+                                        saveLauncher.launch(att.name)
+                                    }
+                                }
+                            ) { Text("Save") }
+                        }
                     }
                 }
             }
-        }
-    }
-}
 
-private fun formatFullDate(millis: Long): String {
-    if (millis <= 0L) return ""
-    return java.text.DateFormat.getDateTimeInstance(
-        java.text.DateFormat.MEDIUM,
-        java.text.DateFormat.SHORT
-    ).format(java.util.Date(millis))
-}
-
-// ---------------------------------------------------------------------------
-// Writing a message
-// ---------------------------------------------------------------------------
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ComposeScreen(
-    vm: MailViewModel,
-    nav: NavHostController,
-    presetAccount: Long,
-    presetTo: String,
-    presetSubject: String
-) {
-    val scope = rememberCoroutineScope()
-    val accounts by vm.accounts.collectAsStateWithLifecycle()
-    val senders = accounts.filter { it.smtpHost.isNotBlank() }
-
-    var fromId by rememberSaveable { mutableStateOf(presetAccount) }
-    var to by rememberSaveable { mutableStateOf(presetTo) }
-    var subject by rememberSaveable { mutableStateOf(presetSubject) }
-    var body by rememberSaveable { mutableStateOf("") }
-    var sending by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    val from = senders.firstOrNull { it.id == fromId } ?: senders.firstOrNull()
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("New message") },
-                navigationIcon = {
-                    IconButton(onClick = { nav.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(
-                        enabled = from != null && to.isNotBlank() && !sending,
-                        onClick = {
-                            val sender = from ?: return@IconButton
-                            scope.launch {
-                                sending = true
-                                error = null
-                                val result = vm.repo.send(sender, to, subject, body)
-                                sending = false
-                                result.onSuccess {
-                                    nav.popBackStack()
-                                }.onFailure {
-                                    error = "Could not send: ${it.message ?: it.javaClass.simpleName}"
-                                }
-                            }
-                        }
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        if (senders.isEmpty()) {
-            Text(
-                "None of your accounts has an outgoing (SMTP) server set up. " +
-                    "Edit an account and fill in the SMTP server to send mail.",
-                modifier = Modifier.padding(padding).padding(24.dp)
-            )
-        } else {
-            Column(
-                Modifier.padding(padding).fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text("From", style = MaterialTheme.typography.labelLarge)
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    senders.forEach { acc ->
-                        FilterChip(
-                            selected = from?.id == acc.id,
-                            onClick = { fromId = acc.id },
-                            label = { Text(acc.email) }
-                        )
-                    }
-                }
-                OutlinedTextField(
-                    value = to,
-                    onValueChange = { to = it },
-                    label = { Text("To (separate several with commas)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = subject,
-                    onValueChange = { subject = it },
-                    label = { Text("Subject") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = body,
-                    onValueChange = { body = it },
-                    label = { Text("Message") },
-                    minLines = 8,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (sending) Text("Sending…")
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            SelectionContainer {
+                Text(m.body, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }

@@ -9,13 +9,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -51,7 +54,9 @@ import java.util.Locale
 fun InboxScreen(vm: MailViewModel, nav: NavHostController) {
     val accounts by vm.accounts.collectAsStateWithLifecycle()
     val messages by vm.messages.collectAsStateWithLifecycle()
+    val folders by vm.folders.collectAsStateWithLifecycle()
     val filter by vm.filter.collectAsStateWithLifecycle()
+    val folder by vm.folder.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -68,16 +73,25 @@ fun InboxScreen(vm: MailViewModel, nav: NavHostController) {
         if (filter != null && accounts.none { it.id == filter }) vm.setFilter(null)
     }
 
+    val title = if (filter == null) {
+        "Inbox"
+    } else {
+        folders.firstOrNull { it.fullName == folder }?.displayName ?: "Inbox"
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Inbox") },
+                title = { Text(title) },
                 actions = {
                     IconButton(onClick = { vm.refresh() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                     }
                     IconButton(onClick = { nav.navigate("accounts") }) {
                         Icon(Icons.Default.ManageAccounts, contentDescription = "Accounts")
+                    }
+                    IconButton(onClick = { nav.navigate("settings") }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 }
             )
@@ -119,7 +133,7 @@ fun InboxScreen(vm: MailViewModel, nav: NavHostController) {
                     FilterChip(
                         selected = filter == null,
                         onClick = { vm.setFilter(null) },
-                        label = { Text("All") }
+                        label = { Text("All inboxes") }
                     )
                     accounts.forEach { acc ->
                         FilterChip(
@@ -131,9 +145,30 @@ fun InboxScreen(vm: MailViewModel, nav: NavHostController) {
                 }
             }
 
+            // With a single account there is no account row, so always allow folder switching.
+            val folderAccountId = filter ?: accounts.singleOrNull()?.id
+            LaunchedEffect(folderAccountId, accounts.size) {
+                if (filter == null && accounts.size == 1) vm.setFilter(accounts.first().id)
+            }
+            if (folderAccountId != null && folders.size > 1) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    folders.forEach { f ->
+                        FilterChip(
+                            selected = folder == f.fullName,
+                            onClick = { vm.setFolder(f.fullName) },
+                            label = { Text(f.displayName) }
+                        )
+                    }
+                }
+            }
+
             if (messages.isEmpty()) {
                 Text(
-                    if (refreshing) "Checking for mail…" else "No messages yet. Tap refresh to check again.",
+                    if (refreshing) "Checking for mail…" else "No messages here yet. Tap refresh to check again.",
                     modifier = Modifier.padding(24.dp)
                 )
             } else {
@@ -165,6 +200,13 @@ private fun MessageItem(row: MessageRow, accountLabel: String?, onClick: () -> U
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
+            if (row.hasAttachments) {
+                Icon(
+                    Icons.Default.AttachFile,
+                    contentDescription = "Has attachments",
+                    modifier = Modifier.size(16.dp).padding(end = 2.dp)
+                )
+            }
             Text(formatDate(row.date), style = MaterialTheme.typography.labelSmall)
         }
         Text(row.subject, fontWeight = weight, maxLines = 1, overflow = TextOverflow.Ellipsis)
