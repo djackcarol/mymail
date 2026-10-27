@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,3 +30,11 @@ jobs:
         with:
           name: MyMail-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish APK on the Releases page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk MyMail.apk
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest MyMail.apk --title "MyMail (latest build)" --notes "Debug build of commit ${GITHUB_SHA::7}"
