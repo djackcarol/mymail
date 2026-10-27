@@ -1,4 +1,4 @@
-# MyMail
+# DJACK Mail
 
 A personal Android email app. Add as many IMAP or POP3 accounts as you like, read them in one
 combined inbox, and send mail through each account's SMTP server. Built for sideloading
@@ -27,14 +27,14 @@ The repository already contains a build workflow. Every time the code is updated
 
 1. Open the **Actions** tab of the repository.
 2. Open the newest **Build APK** run (about 5 to 8 minutes).
-3. When it is green, download **MyMail-debug-apk** from the bottom of the page and unzip it to get
+3. When it is green, download **DJACK-Mail-debug-apk** from the bottom of the page and unzip it to get
    `app-debug.apk`.
 
 ## Installing on your phone
 
 1. Get `app-debug.apk` onto the phone (email it to yourself, Google Drive, or USB).
 2. Tap it. Android will ask to allow installs from that app (Files, Chrome, Drive); allow it.
-3. Open MyMail. Updating over an existing install keeps your accounts and downloaded mail.
+3. Open DJACK Mail. Updating over an existing install keeps your accounts and downloaded mail.
    (If an update ever fails to install, uninstall the app first, which means adding accounts again.)
 
 When the app asks to send notifications, choose Allow.

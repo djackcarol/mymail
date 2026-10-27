@@ -28,13 +28,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MyMail-debug-apk
+          name: DJACK-Mail-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Publish APK on the Releases page
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk MyMail.apk
+          cp app/build/outputs/apk/debug/app-debug.apk DJACK-Mail.apk
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest MyMail.apk --title "MyMail (latest build)" --notes "Debug build of commit ${GITHUB_SHA::7}"
+          gh release create latest DJACK-Mail.apk --title "DJACK Mail (latest build)" --notes "Debug build of commit ${GITHUB_SHA::7}"
