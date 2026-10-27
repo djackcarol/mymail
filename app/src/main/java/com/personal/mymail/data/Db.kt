@@ -91,6 +91,12 @@ interface MessageDao {
     @Query("UPDATE messages SET isRead = 1 WHERE id = :id")
     suspend fun markRead(id: Long)
 
+    @Query("SELECT * FROM messages WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<Long>): List<MailMessage>
+
+    @Query("DELETE FROM messages WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
     @Query("DELETE FROM messages WHERE accountId = :accountId")
     suspend fun deleteForAccount(accountId: Long)
 }
@@ -102,6 +108,9 @@ interface AttachmentDao {
 
     @Insert
     suspend fun insertAll(attachments: List<AttachmentInfo>)
+
+    @Query("DELETE FROM attachments WHERE messageId IN (:ids)")
+    suspend fun deleteForMessages(ids: List<Long>)
 
     @Query(
         "DELETE FROM attachments WHERE messageId IN " +

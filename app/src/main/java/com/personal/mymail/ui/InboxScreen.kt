@@ -1,25 +1,36 @@
 package com.personal.mymail.ui
 
 import android.text.format.DateUtils
-import androidx.compose.foundation.clickable
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -32,13 +43,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,8 +73,25 @@ fun InboxScreen(vm: MailViewModel, nav: NavHostController) {
     val filter by vm.filter.collectAsStateWithLifecycle()
     val folder by vm.folder.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
+    val deleting by vm.deleting.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+
+    var selected by remember { mutableStateOf(setOf<Long>()) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val selecting = selected.isNotEmpty()
+
+    // Back button leaves selection mode first.
+    BackHandler(enabled = selecting) { selected = emptySet() }
+
+    // Start fresh when switching account or folder.
+    LaunchedEffect(filter, folder) { selected = emptySet() }
+
+    // Forget selected messages that are no longer in the list (for example after a refresh).
+    LaunchedEffect(messages) {
+        val present = messages.map { it.id }.toSet()
+        if (selected.any { it !in present }) selected = selected.filter { it in present }.toSet()
+    }
 
     LaunchedEffect(status) {
         status?.let {
@@ -73,32 +105,59 @@ fun InboxScreen(vm: MailViewModel, nav: NavHostController) {
         if (filter != null && accounts.none { it.id == filter }) vm.setFilter(null)
     }
 
-    val title = if (filter == null) {
+    // With a single account there is no account row, so select it to get its folder chips.
+    val folderAccountId = filter ?: accounts.singleOrNull()?.id
+    LaunchedEffect(folderAccountId, accounts.size) {
+        if (filter == null && accounts.size == 1) vm.setFilter(accounts.first().id)
+    }
+
+    val unreadCount = messages.count { !it.isRead }
+    val baseTitle = if (filter == null) {
         "Inbox"
     } else {
         folders.firstOrNull { it.fullName == folder }?.displayName ?: "Inbox"
     }
+    val title = if (unreadCount > 0) "$baseTitle ($unreadCount unread)" else baseTitle
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(title) },
-                actions = {
-                    IconButton(onClick = { vm.refresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+            if (selecting) {
+                TopAppBar(
+                    title = { Text("${selected.size} selected") },
+                    navigationIcon = {
+                        IconButton(onClick = { selected = emptySet() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancel selection")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { selected = messages.map { it.id }.toSet() }) {
+                            Icon(Icons.Default.SelectAll, contentDescription = "Select all")
+                        }
+                        IconButton(enabled = !deleting, onClick = { confirmDelete = true }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete selected")
+                        }
                     }
-                    IconButton(onClick = { nav.navigate("accounts") }) {
-                        Icon(Icons.Default.ManageAccounts, contentDescription = "Accounts")
+                )
+            } else {
+                TopAppBar(
+                    title = { Text(title) },
+                    actions = {
+                        IconButton(onClick = { vm.refresh() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                        }
+                        IconButton(onClick = { nav.navigate("accounts") }) {
+                            Icon(Icons.Default.ManageAccounts, contentDescription = "Accounts")
+                        }
+                        IconButton(onClick = { nav.navigate("settings") }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        }
                     }
-                    IconButton(onClick = { nav.navigate("settings") }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
-                }
-            )
+                )
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            if (accounts.isNotEmpty()) {
+            if (accounts.isNotEmpty() && !selecting) {
                 FloatingActionButton(onClick = { nav.navigate("compose") }) {
                     Icon(Icons.Default.Edit, contentDescription = "Write a message")
                 }
@@ -106,7 +165,7 @@ fun InboxScreen(vm: MailViewModel, nav: NavHostController) {
         }
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            if (refreshing) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (refreshing || deleting) LinearProgressIndicator(Modifier.fillMaxWidth())
 
             if (accounts.isEmpty()) {
                 Column(
@@ -145,11 +204,6 @@ fun InboxScreen(vm: MailViewModel, nav: NavHostController) {
                 }
             }
 
-            // With a single account there is no account row, so always allow folder switching.
-            val folderAccountId = filter ?: accounts.singleOrNull()?.id
-            LaunchedEffect(folderAccountId, accounts.size) {
-                if (filter == null && accounts.size == 1) vm.setFilter(accounts.first().id)
-            }
             if (folderAccountId != null && folders.size > 1) {
                 Row(
                     Modifier.horizontalScroll(rememberScrollState())
@@ -177,52 +231,133 @@ fun InboxScreen(vm: MailViewModel, nav: NavHostController) {
                         val label = if (filter == null && accounts.size > 1) {
                             accounts.firstOrNull { it.id == row.accountId }?.email
                         } else null
-                        MessageItem(row, label) { nav.navigate("message/${row.id}") }
+                        val isSelected = row.id in selected
+                        MessageItem(
+                            row = row,
+                            accountLabel = label,
+                            selecting = selecting,
+                            selected = isSelected,
+                            onClick = {
+                                if (selecting) {
+                                    selected = if (isSelected) selected - row.id else selected + row.id
+                                } else {
+                                    nav.navigate("message/${row.id}")
+                                }
+                            },
+                            onLongClick = {
+                                selected = if (isSelected) selected - row.id else selected + row.id
+                            }
+                        )
                     }
                 }
             }
         }
     }
+
+    if (confirmDelete) {
+        val count = selected.size
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text(if (count == 1) "Delete 1 message?" else "Delete $count messages?") },
+            text = { Text(DELETE_EXPLANATION) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    val ids = selected.toList()
+                    selected = emptySet()
+                    vm.deleteMessages(ids) { outcome -> vm.announceDelete(outcome) }
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageItem(row: MessageRow, accountLabel: String?, onClick: () -> Unit) {
-    val weight = if (row.isRead) FontWeight.Normal else FontWeight.Bold
-    Column(
-        Modifier.fillMaxWidth().clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+private fun MessageItem(
+    row: MessageRow,
+    accountLabel: String?,
+    selecting: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val unread = !row.isRead
+    val colors = MaterialTheme.colorScheme
+    val background = when {
+        selected -> colors.secondaryContainer
+        unread -> colors.primaryContainer.copy(alpha = 0.45f)
+        else -> Color.Transparent
+    }
+    // Unread: full strength and bold. Read: lighter and normal weight.
+    val textColor = if (unread) colors.onSurface else colors.onSurface.copy(alpha = 0.6f)
+    val weight = if (unread) FontWeight.Bold else FontWeight.Normal
+
+    Row(
+        Modifier.fillMaxWidth()
+            .background(background)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                row.fromName,
-                fontWeight = weight,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            if (row.hasAttachments) {
-                Icon(
-                    Icons.Default.AttachFile,
-                    contentDescription = "Has attachments",
-                    modifier = Modifier.size(16.dp).padding(end = 2.dp)
+        Box(
+            Modifier.width(36.dp).padding(top = 4.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            if (selecting) {
+                Checkbox(checked = selected, onCheckedChange = null)
+            } else if (unread) {
+                Box(Modifier.padding(top = 4.dp).size(12.dp).background(colors.primary, CircleShape))
+            }
+        }
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    row.fromName,
+                    fontWeight = weight,
+                    color = textColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (row.hasAttachments) {
+                    Icon(
+                        Icons.Default.AttachFile,
+                        contentDescription = "Has attachments",
+                        tint = textColor,
+                        modifier = Modifier.size(16.dp).padding(end = 2.dp)
+                    )
+                }
+                Text(
+                    formatDate(row.date),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = weight,
+                    color = if (unread) colors.primary else textColor
                 )
             }
-            Text(formatDate(row.date), style = MaterialTheme.typography.labelSmall)
-        }
-        Text(row.subject, fontWeight = weight, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(
-            row.snippet,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        if (accountLabel != null) {
             Text(
-                accountLabel,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
+                row.subject,
+                fontWeight = weight,
+                color = textColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
+            Text(
+                row.snippet,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (unread) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.6f)
+            )
+            if (accountLabel != null) {
+                Text(
+                    accountLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.primary
+                )
+            }
         }
     }
     HorizontalDivider()

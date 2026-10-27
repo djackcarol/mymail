@@ -17,6 +17,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -42,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.personal.mymail.data.AttachmentInfo
 import com.personal.mymail.data.MailMessage
@@ -61,6 +64,8 @@ fun MessageScreen(vm: MailViewModel, nav: NavHostController, messageId: Long) {
     var attachments by remember { mutableStateOf<List<AttachmentInfo>>(emptyList()) }
     var busyId by remember { mutableStateOf<Long?>(null) }
     var pendingSave by remember { mutableStateOf<File?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val deleting by vm.deleting.collectAsStateWithLifecycle()
 
     LaunchedEffect(messageId) {
         message = vm.repo.getMessage(messageId)
@@ -118,6 +123,30 @@ fun MessageScreen(vm: MailViewModel, nav: NavHostController, messageId: Long) {
         }
     }
 
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this message?") },
+            text = { Text(DELETE_EXPLANATION) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    vm.deleteMessages(listOf(messageId)) { outcome ->
+                        if (outcome.error == null) {
+                            vm.announceDelete(outcome)
+                            nav.popBackStack()
+                        } else {
+                            scope.launch { snackbar.showSnackbar(outcome.error) }
+                        }
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -125,6 +154,14 @@ fun MessageScreen(vm: MailViewModel, nav: NavHostController, messageId: Long) {
                 navigationIcon = {
                     IconButton(onClick = { nav.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        enabled = message != null && !deleting,
+                        onClick = { confirmDelete = true }
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete")
                     }
                 }
             )

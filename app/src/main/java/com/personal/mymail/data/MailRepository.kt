@@ -18,6 +18,9 @@ import java.util.UUID
 /** What one account's refresh found. */
 data class RefreshOutcome(val newMail: List<NewMail>, val error: String?)
 
+/** How many messages were deleted, and what went wrong (if anything). */
+data class DeleteOutcome(val deleted: Int, val error: String?)
+
 /** What refreshing every account found. */
 data class RefreshAllResult(val errors: Map<String, String>, val newMail: List<NewMail>)
 
@@ -147,11 +150,14 @@ class MailRepository(context: Context) {
                     try {
                         val known = db.messages().knownUids(account.id, folder.fullName).toSet()
                         val fetched =
-                            MailEngine.fetchFolder(store, folder.fullName, account.id, known)
+                            MailEngine.fetchFolder(
+                                store, folder.fullName, account.id, known,
+                                markAllRead = folder.role != "INBOX"
+                            )
                         val inserted = saveFetched(fetched)
                         // Only announce mail that arrived after the first sync of the inbox.
                         if (folder.role == "INBOX" && folder.lastSync > 0L) {
-                            inserted.forEach { (message, id) ->
+                            inserted.filter { !it.first.isRead }.forEach { (message, id) ->
                                 newMail += NewMail(id, account.email, message.fromName, message.subject)
                             }
                         }
@@ -184,6 +190,63 @@ class MailRepository(context: Context) {
             outcome.error?.let { errors[account.email] = it }
         }
         return RefreshAllResult(errors, newMail)
+    }
+
+    // ------------------------------------------------------------------
+    // Deleting
+    // ------------------------------------------------------------------
+
+    private suspend fun removeLocal(ids: List<Long>) {
+        db.withTransaction {
+            ids.chunked(500).forEach {
+                db.attachments().deleteForMessages(it)
+                db.messages().deleteByIds(it)
+            }
+        }
+    }
+
+    /**
+     * Deletes messages on the mail server and then from this phone.
+     * IMAP mail is moved to the account's Trash folder (or deleted for good if it is already in
+     * Trash or the account has no Trash folder); POP3 mail is deleted for good.
+     * A message is only removed from the phone after the server has accepted the deletion.
+     */
+    suspend fun deleteMessages(ids: Collection<Long>): DeleteOutcome = withContext(Dispatchers.IO) {
+        val messages = ids.toList().chunked(500).flatMap { db.messages().getByIds(it) }
+        var deleted = 0
+        val problems = ArrayList<String>()
+        for ((accountId, ofAccount) in messages.groupBy { it.accountId }) {
+            val account = db.accounts().get(accountId)
+            if (account == null) {
+                removeLocal(ofAccount.map { it.id })
+                deleted += ofAccount.size
+                continue
+            }
+            try {
+                val folders = db.folders().getAll(accountId)
+                val trash = if (account.protocol == "IMAP") {
+                    folders.firstOrNull { it.role == "TRASH" }?.fullName
+                } else null
+                val store = MailEngine.openStore(account, secrets.getPassword(accountId))
+                try {
+                    for ((folderName, inFolder) in ofAccount.groupBy { it.folder }) {
+                        val role = folders.firstOrNull { it.fullName == folderName }?.role
+                        val moveTo = if (role == "TRASH") null else trash
+                        MailEngine.deleteMessages(store, folderName, inFolder.map { it.uid }, moveTo)
+                        removeLocal(inFolder.map { it.id })
+                        deleted += inFolder.size
+                    }
+                } finally {
+                    try {
+                        store.close()
+                    } catch (_: Exception) {
+                    }
+                }
+            } catch (e: Exception) {
+                problems += "${account.email}: ${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+        DeleteOutcome(deleted, if (problems.isEmpty()) null else problems.joinToString("\n"))
     }
 
     // ------------------------------------------------------------------

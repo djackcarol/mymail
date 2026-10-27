@@ -8,6 +8,7 @@ combined inbox, and send mail through each account's SMTP server. Built for side
 
 - Multiple accounts, IMAP or POP3, with SSL, STARTTLS or no encryption
 - One combined inbox, with a filter for each account
+- **Unread mail stands out:** a blue dot, bold text and a tinted row. Read mail is lighter. The title shows how many are unread.
 - **Folders (IMAP):** pick which folders to download (Sent, Drafts, Archive, and so on) from
   Accounts > the folder button next to an account. Inbox and Sent are on by default.
 - **Background sync and notifications:** new mail is checked for automatically (every 15 minutes
@@ -19,7 +20,7 @@ combined inbox, and send mail through each account's SMTP server. Built for side
 - Cc and Bcc
 - Sent mail is also saved to your Sent folder on IMAP accounts (Gmail does this by itself)
 - Passwords are stored encrypted on the phone (Android Keystore)
-- Nothing is ever deleted on your mail server
+- **Delete:** press and hold a message to start selecting, tap more to add them, then tap the bin. You can also delete from inside a message.
 
 ## Getting the APK without installing anything (GitHub, free)
 
@@ -63,7 +64,8 @@ When the app asks to send notifications, choose Allow.
   downloaded when you open or save them. With POP3, the whole message is downloaded.
 - POP3 accounts only have an inbox (that is how POP3 works).
 - HTML mail is shown as plain text. Pictures inside messages are not shown.
-- You can't delete, archive or move messages from the app yet, and drafts are not saved.
+- Deleting also deletes on the mail server: IMAP mail goes to the Trash folder; mail already in Trash, POP3 mail, and accounts with no Trash folder are deleted permanently.
+- You can't archive or move messages from the app yet, and drafts are not saved.
 - This is a debug build, which is fine for personal use.
 
 ## Project layout

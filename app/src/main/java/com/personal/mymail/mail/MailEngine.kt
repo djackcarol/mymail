@@ -160,7 +160,8 @@ object MailEngine {
         folderName: String,
         accountId: Long,
         known: Set<String>,
-        limit: Int = 40
+        limit: Int = 40,
+        markAllRead: Boolean = false
     ): List<FetchedMessage> {
         val folder = store.getFolder(folderName)
         folder.open(Folder.READ_ONLY)
@@ -173,13 +174,17 @@ object MailEngine {
 
                 val profile = FetchProfile()
                 profile.add(FetchProfile.Item.ENVELOPE)
-                if (folder is IMAPFolder) profile.add(UIDFolder.FetchProfileItem.UID)
+                if (folder is IMAPFolder) {
+                    profile.add(UIDFolder.FetchProfileItem.UID)
+                    profile.add(FetchProfile.Item.FLAGS)
+                }
                 folder.fetch(messages, profile)
 
                 for (m in messages.reversed()) {
                     val uid = uidOf(folder, m) ?: continue
                     if (uid in known) continue
-                    result += toFetched(accountId, folderName, uid, m)
+                    val seen = markAllRead || (folder is IMAPFolder && isSeen(m))
+                    result += toFetched(accountId, folderName, uid, m, seen)
                 }
             }
         } finally {
@@ -201,7 +206,13 @@ object MailEngine {
         addresses?.joinToString(", ") { (it as? InternetAddress)?.toUnicodeString() ?: it.toString() }
             ?: ""
 
-    private fun toFetched(accountId: Long, folderName: String, uid: String, m: Message): FetchedMessage {
+    private fun toFetched(
+        accountId: Long,
+        folderName: String,
+        uid: String,
+        m: Message,
+        isRead: Boolean
+    ): FetchedMessage {
         val from = m.from?.firstOrNull() as? InternetAddress
         val fromAddress = from?.address ?: ""
         val fromName = from?.personal?.takeIf { it.isNotBlank() } ?: fromAddress
@@ -237,6 +248,7 @@ object MailEngine {
             date = m.sentDate?.time ?: m.receivedDate?.time ?: 0L,
             snippet = body.replace(Regex("\\s+"), " ").trim().take(140),
             body = body,
+            isRead = isRead,
             hasAttachments = attachments.isNotEmpty()
         )
         return FetchedMessage(message, attachments)
@@ -344,6 +356,51 @@ object MailEngine {
             } catch (_: Exception) {
             }
         }
+    }
+
+    private fun isSeen(m: Message): Boolean = try {
+        m.isSet(Flags.Flag.SEEN)
+    } catch (_: Exception) {
+        false
+    }
+
+    // ------------------------------------------------------------------
+    // Deleting
+    // ------------------------------------------------------------------
+
+    /**
+     * Deletes the messages with the given UIDs from [folderName] on the server.
+     * With [trashFolder] (IMAP only) they are copied there first, so they end up in Trash;
+     * without it they are deleted permanently. Messages already gone from the server are ignored.
+     */
+    fun deleteMessages(store: Store, folderName: String, uids: List<String>, trashFolder: String?) {
+        val folder = store.getFolder(folderName)
+        folder.open(Folder.READ_WRITE)
+        try {
+            val wanted = uids.toSet()
+            val found: List<Message> = when (folder) {
+                is IMAPFolder ->
+                    folder.getMessagesByUID(uids.map { it.toLong() }.toLongArray()).filterNotNull()
+                is POP3Folder ->
+                    folder.messages.filter { folder.getUID(it) in wanted }
+                else -> emptyList()
+            }
+            if (found.isNotEmpty()) {
+                val array = found.toTypedArray()
+                if (trashFolder != null && folder is IMAPFolder && trashFolder != folderName) {
+                    folder.copyMessages(array, store.getFolder(trashFolder))
+                }
+                folder.setFlags(array, Flags(Flags.Flag.DELETED), true)
+            }
+        } catch (e: Exception) {
+            try {
+                folder.close(false)
+            } catch (_: Exception) {
+            }
+            throw e
+        }
+        // Closing with true removes the messages that were flagged as deleted.
+        folder.close(true)
     }
 
     // ------------------------------------------------------------------

@@ -43,3 +43,7 @@ internal fun forwardedBody(m: MailMessage): String =
         "Subject: ${m.subject}\n" +
         "To: ${m.toAddresses}\n\n" +
         m.body
+
+internal const val DELETE_EXPLANATION =
+    "IMAP mail is moved to the Trash folder on your mail server. Mail that is already in Trash, " +
+        "mail from POP3 accounts, and mail from accounts with no Trash folder is deleted permanently."

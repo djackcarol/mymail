@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.personal.mymail.data.Account
+import com.personal.mymail.data.DeleteOutcome
 import com.personal.mymail.data.MailFolder
 import com.personal.mymail.data.MailRepository
 import com.personal.mymail.data.MessageRow
@@ -49,6 +50,9 @@ class MailViewModel(app: Application) : AndroidViewModel(app) {
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing
 
+    private val _deleting = MutableStateFlow(false)
+    val deleting: StateFlow<Boolean> = _deleting
+
     private val _status = MutableStateFlow<String?>(null)
     val status: StateFlow<String?> = _status
 
@@ -83,6 +87,29 @@ class MailViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setFolderEnabled(folder: MailFolder, enabled: Boolean) {
         viewModelScope.launch { repo.setFolderEnabled(folder.id, enabled) }
+    }
+
+    /** Deletes messages on the server and this phone. [onFinished] is called when it is done. */
+    fun deleteMessages(ids: List<Long>, onFinished: (DeleteOutcome) -> Unit = {}) {
+        if (ids.isEmpty() || _deleting.value) return
+        viewModelScope.launch {
+            _deleting.value = true
+            val outcome = repo.deleteMessages(ids)
+            _deleting.value = false
+            onFinished(outcome)
+        }
+    }
+
+    /** Shows the result of a delete as a message at the bottom of the inbox. */
+    fun announceDelete(outcome: DeleteOutcome) {
+        _status.value = when {
+            outcome.error != null ->
+                (if (outcome.deleted > 0) "Deleted ${outcome.deleted}, but some failed:\n"
+                else "Couldn't delete:\n") + outcome.error
+            outcome.deleted == 0 -> "Nothing to delete"
+            outcome.deleted == 1 -> "Message deleted"
+            else -> "${outcome.deleted} messages deleted"
+        }
     }
 
     fun consumeStatus() {
