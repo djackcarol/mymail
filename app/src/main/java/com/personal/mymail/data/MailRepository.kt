@@ -8,12 +8,26 @@ import com.personal.mymail.mail.FetchedMessage
 import com.personal.mymail.mail.MailEngine
 import com.personal.mymail.mail.OutAttachment
 import com.personal.mymail.mail.OutgoingMail
+import com.personal.mymail.sync.Notifier
+import javax.mail.Store
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.util.UUID
+
+/** Only one sync at a time, even if the app and the background worker both start one. */
+private val syncMutex = Mutex()
+
+/** What comparing one folder with the server changed on this phone. */
+private class FolderChange(
+    /** Messages that were removed or became read here because of what the server says. */
+    val cleared: List<Long>,
+    val validityReset: Boolean
+)
 
 /** What one account's refresh found. */
 data class RefreshOutcome(val newMail: List<NewMail>, val error: String?)
@@ -55,7 +69,17 @@ class MailRepository(context: Context) {
     suspend fun attachments(messageId: Long): List<AttachmentInfo> =
         db.attachments().forMessage(messageId)
 
-    suspend fun markRead(id: Long) = db.messages().markRead(id)
+    /**
+     * Marks a message read on this phone, clears its notification, and tells the server.
+     * If the server can't be reached, the change is kept and sent at the next sync.
+     */
+    suspend fun markRead(id: Long) {
+        val message = db.messages().get(id) ?: return
+        if (message.isRead) return
+        db.messages().markRead(id)
+        Notifier.cancel(appContext, listOf(id))
+        pushPendingReads(message.accountId)
+    }
 
     /** All of the user's own addresses, lower-cased (used to build "reply all"). */
     suspend fun ownAddresses(): Set<String> =
@@ -123,7 +147,12 @@ class MailRepository(context: Context) {
      * A folder that fails does not stop the others; the first error is reported.
      */
     suspend fun refresh(account: Account): RefreshOutcome = withContext(Dispatchers.IO) {
+        syncMutex.withLock { refreshLocked(account) }
+    }
+
+    private suspend fun refreshLocked(account: Account): RefreshOutcome {
         val newMail = ArrayList<NewMail>()
+        val cleared = ArrayList<Long>()
         var firstError: String? = null
         try {
             val store = MailEngine.openStore(account, secrets.getPassword(account.id))
@@ -148,15 +177,30 @@ class MailRepository(context: Context) {
 
                 for (folder in toSync) {
                     try {
+                        var firstSync = folder.lastSync == 0L
+
+                        // Step 1: apply what happened to our existing mail on the server
+                        // (read, unread, deleted or moved by another app).
+                        if (account.protocol == "IMAP") {
+                            try {
+                                val change = syncFolderState(store, account, folder)
+                                cleared += change.cleared
+                                if (change.validityReset) firstSync = true
+                            } catch (e: Exception) {
+                                if (firstError == null) {
+                                    firstError = "${folder.displayName}: couldn't update read/deleted " +
+                                        "status (${e.message ?: e.javaClass.simpleName})"
+                                }
+                            }
+                        }
+
+                        // Step 2: download mail that is new.
                         val known = db.messages().knownUids(account.id, folder.fullName).toSet()
                         val fetched =
-                            MailEngine.fetchFolder(
-                                store, folder.fullName, account.id, known,
-                                markAllRead = folder.role != "INBOX"
-                            )
+                            MailEngine.fetchFolder(store, folder.fullName, account.id, known)
                         val inserted = saveFetched(fetched)
                         // Only announce mail that arrived after the first sync of the inbox.
-                        if (folder.role == "INBOX" && folder.lastSync > 0L) {
+                        if (folder.role == "INBOX" && !firstSync) {
                             inserted.filter { !it.first.isRead }.forEach { (message, id) ->
                                 newMail += NewMail(id, account.email, message.fromName, message.subject)
                             }
@@ -177,7 +221,84 @@ class MailRepository(context: Context) {
         } catch (e: Exception) {
             firstError = e.message ?: e.javaClass.simpleName
         }
-        RefreshOutcome(newMail, firstError)
+        Notifier.cancel(appContext, cleared)
+        return RefreshOutcome(newMail, firstError)
+    }
+
+    /**
+     * Compares one IMAP folder with the server and applies the differences here:
+     * messages that are gone on the server are removed, read status is copied over, and
+     * messages read on this phone are marked as read on the server.
+     */
+    private suspend fun syncFolderState(store: Store, account: Account, folder: MailFolder): FolderChange {
+        val local = db.messages().syncState(account.id, folder.fullName)
+        if (local.isEmpty() && folder.uidValidity != 0L) return FolderChange(emptyList(), false)
+
+        val pending = local.filter { it.readPending }.map { it.uid }.toSet()
+        val state = MailEngine.syncState(
+            store, folder.fullName, local.map { it.uid }, pending, folder.uidValidity
+        )
+
+        // The server renumbered this folder, so our saved UIDs are useless. Start the folder over.
+        if (state.validityChanged) {
+            db.withTransaction {
+                db.attachments().deleteForFolder(account.id, folder.fullName)
+                db.messages().deleteFolder(account.id, folder.fullName)
+                db.folders().setUidValidity(folder.id, state.uidValidity)
+            }
+            return FolderChange(local.map { it.id }, true)
+        }
+        if (state.uidValidity != folder.uidValidity) {
+            db.folders().setUidValidity(folder.id, state.uidValidity)
+        }
+
+        val byUid = local.associateBy { it.uid }
+        val goneIds = state.missing.mapNotNull { byUid[it]?.id }
+        val nowRead = ArrayList<Long>()
+        val nowUnread = ArrayList<Long>()
+        for ((uid, seen) in state.seen) {
+            val mine = byUid[uid] ?: continue
+            if (seen && !mine.isRead) nowRead += mine.id
+            if (!seen && mine.isRead) nowUnread += mine.id
+        }
+        val pushedIds = state.pushed.mapNotNull { byUid[it]?.id }
+
+        removeLocal(goneIds)
+        nowRead.chunked(500).forEach { db.messages().setRead(it, true) }
+        nowUnread.chunked(500).forEach { db.messages().setRead(it, false) }
+        pushedIds.chunked(500).forEach { db.messages().clearPending(it) }
+        return FolderChange(goneIds + nowRead, false)
+    }
+
+    /** Sends "read" status for messages read on this phone to the server, right away if possible. */
+    suspend fun pushPendingReads(accountId: Long) {
+        withContext(Dispatchers.IO) {
+            syncMutex.withLock {
+                try {
+                    val account = db.accounts().get(accountId)
+                    if (account == null || account.protocol != "IMAP") return@withLock
+                    val names = db.messages().pendingFolders(accountId)
+                    if (names.isEmpty()) return@withLock
+                    val rows = db.folders().getAll(accountId)
+                    val store = MailEngine.openStore(account, secrets.getPassword(accountId))
+                    try {
+                        val cleared = ArrayList<Long>()
+                        for (name in names) {
+                            val row = rows.firstOrNull { it.fullName == name } ?: continue
+                            cleared += syncFolderState(store, account, row).cleared
+                        }
+                        Notifier.cancel(appContext, cleared)
+                    } finally {
+                        try {
+                            store.close()
+                        } catch (_: Exception) {
+                        }
+                    }
+                } catch (_: Exception) {
+                    // No connection right now. The change stays marked and is sent at the next sync.
+                }
+            }
+        }
     }
 
     /** Refreshes every account. */

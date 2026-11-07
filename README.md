@@ -21,6 +21,9 @@ combined inbox, and send mail through each account's SMTP server. Built for side
 - Sent mail is also saved to your Sent folder on IMAP accounts (Gmail does this by itself)
 - Passwords are stored encrypted on the phone (Android Keystore)
 - **Delete:** press and hold a message to start selecting, tap more to add them, then tap the bin. You can also delete from inside a message.
+- **Stays in step with the mail server (IMAP):** if you read, mark unread, delete, or move a message in another app, the same
+  happens here the next time the app checks. Reading a message here marks it read on the server too, and the new-mail
+  notification disappears once the message is read or deleted anywhere.
 
 ## Getting the APK without installing anything (GitHub, free)
 
@@ -58,6 +61,10 @@ When the app asks to send notifications, choose Allow.
 
 ## Things to know
 
+- Syncing happens when you open the app, when you tap refresh, and on the background schedule. It is not instant.
+- A message that another app moves out of a folder (archive, move to a label or another folder) disappears from that folder here,
+  the same as a delete, because it is no longer in that folder on the server.
+- POP3 can't sync read or deleted status. That is a limit of POP3, and those accounts only download mail.
 - Background checks are scheduled by Android. They run at most as often as you choose, but battery
   saver and Doze mode can delay them, so mail may sometimes show up late. This is not push email.
 - Each refresh downloads the newest 40 messages per enabled folder. With IMAP, attachments are only

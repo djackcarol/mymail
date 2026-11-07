@@ -57,6 +57,19 @@ data class OutgoingMail(
 /** A folder found on the server. */
 data class FolderInfo(val fullName: String, val displayName: String, val role: String)
 
+/** What the server says about messages we already have in one folder. */
+class ServerState(
+    val uidValidity: Long,
+    /** True if the server renumbered the folder; the stored UIDs can no longer be trusted. */
+    val validityChanged: Boolean,
+    /** UIDs that are no longer in the folder (deleted, moved or archived somewhere else). */
+    val missing: Set<String>,
+    /** For messages still there: true if the server has them marked as read. */
+    val seen: Map<String, Boolean>,
+    /** UIDs whose "read" status this phone just sent to the server. */
+    val pushed: Set<String>
+)
+
 /** A downloaded message plus its attachment list (messageId is filled in when saved). */
 class FetchedMessage(val message: MailMessage, val attachments: List<AttachmentInfo>)
 
@@ -91,6 +104,8 @@ object MailEngine {
         val props = Properties().apply {
             put("mail.$proto.connectiontimeout", CONNECT_TIMEOUT_MS)
             put("mail.$proto.timeout", READ_TIMEOUT_MS)
+            // Reading a message body must not mark it as read on the server by itself.
+            put("mail.$proto.peek", "true")
             if (a.incomingSecurity == "STARTTLS") {
                 put("mail.$proto.starttls.enable", "true")
                 put("mail.$proto.starttls.required", "true")
@@ -350,6 +365,81 @@ object MailEngine {
                 dest.delete()
                 throw e
             }
+        } finally {
+            try {
+                folder.close(false)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /**
+     * Compares the messages we already have ([localUids]) with the server.
+     * Messages we read here ([pushRead]) are marked as read on the server first.
+     * IMAP only.
+     */
+    fun syncState(
+        store: Store,
+        folderName: String,
+        localUids: List<String>,
+        pushRead: Set<String>,
+        storedValidity: Long
+    ): ServerState {
+        val folder = store.getFolder(folderName) as? IMAPFolder
+            ?: return ServerState(0L, false, emptySet(), emptyMap(), emptySet())
+        folder.open(Folder.READ_WRITE)
+        try {
+            val validity = folder.uidValidity
+            if (storedValidity != 0L && storedValidity != validity) {
+                return ServerState(validity, true, emptySet(), emptyMap(), emptySet())
+            }
+
+            val missing = HashSet<String>()
+            val seen = HashMap<String, Boolean>()
+            val pushed = HashSet<String>()
+            val flagsOnly = FetchProfile().apply { add(FetchProfile.Item.FLAGS) }
+
+            // Small batches keep each server command short.
+            for (batch in localUids.chunked(200)) {
+                val found = folder.getMessagesByUID(batch.map { it.toLong() }.toLongArray())
+                val present = ArrayList<Message>()
+                val presentUids = ArrayList<String>()
+                for (i in batch.indices) {
+                    val m: Message? = found[i]
+                    if (m == null || m.isExpunged) missing += batch[i] else {
+                        present += m
+                        presentUids += batch[i]
+                    }
+                }
+                if (present.isEmpty()) continue
+                folder.fetch(present.toTypedArray(), flagsOnly)
+
+                val toMark = ArrayList<Message>()
+                val toMarkUids = ArrayList<String>()
+                for (i in present.indices) {
+                    val m = present[i]
+                    val uid = presentUids[i]
+                    // Flagged as deleted by another app, even if not removed yet: treat as gone.
+                    if (m.isSet(Flags.Flag.DELETED)) {
+                        missing += uid
+                        continue
+                    }
+                    val isSeen = m.isSet(Flags.Flag.SEEN)
+                    seen[uid] = isSeen
+                    if (uid in pushRead) {
+                        pushed += uid
+                        if (!isSeen) {
+                            toMark += m
+                            toMarkUids += uid
+                        }
+                    }
+                }
+                if (toMark.isNotEmpty()) {
+                    folder.setFlags(toMark.toTypedArray(), Flags(Flags.Flag.SEEN), true)
+                    toMarkUids.forEach { seen[it] = true }
+                }
+            }
+            return ServerState(validity, false, missing, seen, pushed)
         } finally {
             try {
                 folder.close(false)

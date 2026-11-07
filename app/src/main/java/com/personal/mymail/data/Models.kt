@@ -38,7 +38,9 @@ data class MailFolder(
     val role: String,
     val syncEnabled: Boolean,
     /** 0 until the first successful sync; used so old mail doesn't trigger notifications. */
-    val lastSync: Long = 0
+    val lastSync: Long = 0,
+    /** The server's UIDVALIDITY for this folder; if it changes, the stored UIDs are meaningless. */
+    val uidValidity: Long = 0
 )
 
 @Entity(
@@ -63,7 +65,9 @@ data class MailMessage(
     val snippet: String,
     val body: String,
     val isRead: Boolean = false,
-    val hasAttachments: Boolean = false
+    val hasAttachments: Boolean = false,
+    /** Read on this phone, but the server has not been told yet. */
+    val readPending: Boolean = false
 )
 
 @Entity(
@@ -91,6 +95,14 @@ data class MessageRow(
     val snippet: String,
     val isRead: Boolean,
     val hasAttachments: Boolean
+)
+
+/** What we remember about a downloaded message, used to compare with the server. */
+data class LocalState(
+    val id: Long,
+    val uid: String,
+    val isRead: Boolean,
+    val readPending: Boolean
 )
 
 /** A freshly downloaded message, used to build notifications. */

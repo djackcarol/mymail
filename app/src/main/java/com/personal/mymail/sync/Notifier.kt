@@ -45,6 +45,13 @@ object Notifier {
         )
     }
 
+    /** Removes the notifications of messages that were read or deleted somewhere else. */
+    fun cancel(context: Context, messageIds: Collection<Long>) {
+        if (messageIds.isEmpty()) return
+        val manager = NotificationManagerCompat.from(context)
+        messageIds.forEach { manager.cancel(it.toInt()) }
+    }
+
     /** Shows one notification per message for a few messages, or a single summary for many. */
     fun notifyNew(context: Context, items: List<NewMail>) {
         if (items.isEmpty() || !canNotify(context)) return

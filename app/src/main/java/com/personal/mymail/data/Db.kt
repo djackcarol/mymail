@@ -63,6 +63,9 @@ interface FolderDao {
     @Query("UPDATE folders SET lastSync = :time WHERE id = :id")
     suspend fun setLastSync(id: Long, time: Long)
 
+    @Query("UPDATE folders SET uidValidity = :validity WHERE id = :id")
+    suspend fun setUidValidity(id: Long, validity: Long)
+
     @Query("DELETE FROM folders WHERE accountId = :accountId")
     suspend fun deleteForAccount(accountId: Long)
 }
@@ -88,8 +91,27 @@ interface MessageDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(messages: List<MailMessage>): List<Long>
 
-    @Query("UPDATE messages SET isRead = 1 WHERE id = :id")
+    /** Marks a message read here and remembers that the server still has to be told. */
+    @Query("UPDATE messages SET isRead = 1, readPending = 1 WHERE id = :id AND isRead = 0")
     suspend fun markRead(id: Long)
+
+    @Query(
+        "SELECT id, uid, isRead, readPending FROM messages " +
+            "WHERE accountId = :accountId AND folder = :folder ORDER BY date DESC LIMIT 500"
+    )
+    suspend fun syncState(accountId: Long, folder: String): List<LocalState>
+
+    @Query("UPDATE messages SET isRead = :read WHERE id IN (:ids)")
+    suspend fun setRead(ids: List<Long>, read: Boolean)
+
+    @Query("UPDATE messages SET readPending = 0 WHERE id IN (:ids)")
+    suspend fun clearPending(ids: List<Long>)
+
+    @Query("SELECT DISTINCT folder FROM messages WHERE accountId = :accountId AND readPending = 1")
+    suspend fun pendingFolders(accountId: Long): List<String>
+
+    @Query("DELETE FROM messages WHERE accountId = :accountId AND folder = :folder")
+    suspend fun deleteFolder(accountId: Long, folder: String)
 
     @Query("SELECT * FROM messages WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<Long>): List<MailMessage>
@@ -111,6 +133,12 @@ interface AttachmentDao {
 
     @Query("DELETE FROM attachments WHERE messageId IN (:ids)")
     suspend fun deleteForMessages(ids: List<Long>)
+
+    @Query(
+        "DELETE FROM attachments WHERE messageId IN " +
+            "(SELECT id FROM messages WHERE accountId = :accountId AND folder = :folder)"
+    )
+    suspend fun deleteForFolder(accountId: Long, folder: String)
 
     @Query(
         "DELETE FROM attachments WHERE messageId IN " +
@@ -164,9 +192,22 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
     }
 }
 
+/**
+ * Version 2 -> 3: adds the bookkeeping needed to sync read and deleted status with the server.
+ * Inbox messages that are already read here are flagged so the server is told about them,
+ * instead of the server's "unread" overwriting them.
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE messages ADD COLUMN readPending INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE folders ADD COLUMN uidValidity INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("UPDATE messages SET readPending = 1 WHERE isRead = 1 AND folder = 'INBOX'")
+    }
+}
+
 @Database(
     entities = [Account::class, MailFolder::class, MailMessage::class, AttachmentInfo::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -185,7 +226,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "mymail.db"
-                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
             }
     }
 }

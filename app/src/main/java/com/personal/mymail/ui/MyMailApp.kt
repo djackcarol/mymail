@@ -2,6 +2,8 @@ package com.personal.mymail.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -16,6 +18,9 @@ fun MyMailApp(
     vm: MailViewModel = viewModel()
 ) {
     val nav = rememberNavController()
+
+    // Pick up changes made in other mail apps whenever this app is opened again.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshIfStale() }
 
     NavHost(navController = nav, startDestination = "inbox") {
         composable("inbox") {

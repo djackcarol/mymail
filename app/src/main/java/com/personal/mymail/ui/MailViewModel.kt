@@ -69,8 +69,20 @@ class MailViewModel(app: Application) : AndroidViewModel(app) {
         _folder.value = fullName
     }
 
+    private var lastRefresh = 0L
+
+    /** Refreshes when the app is reopened, but not more than once every 30 seconds. */
+    fun refreshIfStale() {
+        if (System.currentTimeMillis() - lastRefresh > 30_000L) refresh()
+    }
+
+    fun markRead(messageId: Long) {
+        viewModelScope.launch { repo.markRead(messageId) }
+    }
+
     fun refresh() {
         if (_refreshing.value) return
+        lastRefresh = System.currentTimeMillis()
         viewModelScope.launch {
             _refreshing.value = true
             val result = repo.refreshAll()

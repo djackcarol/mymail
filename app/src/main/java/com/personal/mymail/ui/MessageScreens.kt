@@ -70,7 +70,7 @@ fun MessageScreen(vm: MailViewModel, nav: NavHostController, messageId: Long) {
     LaunchedEffect(messageId) {
         message = vm.repo.getMessage(messageId)
         attachments = vm.repo.attachments(messageId)
-        vm.repo.markRead(messageId)
+        vm.markRead(messageId)
     }
 
     val saveLauncher = rememberLauncherForActivityResult(
