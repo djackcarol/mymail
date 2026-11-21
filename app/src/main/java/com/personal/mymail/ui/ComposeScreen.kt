@@ -54,13 +54,19 @@ private const val MAX_ATTACHMENT_BYTES = 20L * 1024L * 1024L
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ComposeScreen(vm: MailViewModel, nav: NavHostController, mode: String, messageId: Long) {
+fun ComposeScreen(
+    vm: MailViewModel,
+    nav: NavHostController,
+    mode: String,
+    messageId: Long,
+    presetTo: String = ""
+) {
     val scope = rememberCoroutineScope()
     val accounts by vm.accounts.collectAsStateWithLifecycle()
     val senders = accounts.filter { it.smtpHost.isNotBlank() }
 
     var fromId by rememberSaveable { mutableStateOf(-1L) }
-    var to by rememberSaveable { mutableStateOf("") }
+    var to by rememberSaveable { mutableStateOf(presetTo) }
     var cc by rememberSaveable { mutableStateOf("") }
     var bcc by rememberSaveable { mutableStateOf("") }
     var subject by rememberSaveable { mutableStateOf("") }

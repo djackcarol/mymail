@@ -270,6 +270,31 @@ class MailRepository(context: Context) {
         return FolderChange(goneIds + nowRead, false)
     }
 
+    /**
+     * Returns the message with its formatted (HTML) version filled in. Messages saved by older
+     * versions of the app only have plain text, so their HTML is fetched from the server once.
+     * If the server can't be reached the message is returned as it is and tried again next time.
+     */
+    suspend fun ensureHtml(message: MailMessage): MailMessage = withContext(Dispatchers.IO) {
+        if (message.htmlChecked) return@withContext message
+        try {
+            val account = db.accounts().get(message.accountId) ?: return@withContext message
+            val store = MailEngine.openStore(account, secrets.getPassword(account.id))
+            val html = try {
+                MailEngine.fetchHtml(store, message.folder, message.uid)
+            } finally {
+                try {
+                    store.close()
+                } catch (_: Exception) {
+                }
+            }
+            db.messages().setHtml(message.id, html)
+            message.copy(htmlBody = html, htmlChecked = true)
+        } catch (_: Exception) {
+            message
+        }
+    }
+
     /** Sends "read" status for messages read on this phone to the server, right away if possible. */
     suspend fun pushPendingReads(accountId: Long) {
         withContext(Dispatchers.IO) {

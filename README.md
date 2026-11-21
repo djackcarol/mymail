@@ -20,6 +20,10 @@ combined inbox, and send mail through each account's SMTP server. Built for side
 - Cc and Bcc
 - Sent mail is also saved to your Sent folder on IMAP accounts (Gmail does this by itself)
 - Passwords are stored encrypted on the phone (Android Keystore)
+- **Formatted (HTML) email** is shown the way the sender designed it, and **every link can be tapped**, including links in plain-text emails.
+  Web links open in your browser, phone numbers open the dialer, and email addresses open a new message here.
+  Pictures from the internet are hidden until you tap Show pictures (they can tell the sender you opened the mail).
+  A button lets you switch any message to plain text.
 - **Delete:** press and hold a message to start selecting, tap more to add them, then tap the bin. You can also delete from inside a message.
 - **Stays in step with the mail server (IMAP):** if you read, mark unread, delete, or move a message in another app, the same
   happens here the next time the app checks. Reading a message here marks it read on the server too, and the new-mail
@@ -70,7 +74,8 @@ When the app asks to send notifications, choose Allow.
 - Each refresh downloads the newest 40 messages per enabled folder. With IMAP, attachments are only
   downloaded when you open or save them. With POP3, the whole message is downloaded.
 - POP3 accounts only have an inbox (that is how POP3 works).
-- HTML mail is shown as plain text. Pictures inside messages are not shown.
+- Scripts in emails never run. Pictures that are attached inside the message itself (rather than loaded from the internet) are not shown yet.
+  Messages saved by an older version fetch their formatted version from the server the first time you open them (needs a connection).
 - Deleting also deletes on the mail server: IMAP mail goes to the Trash folder; mail already in Trash, POP3 mail, and accounts with no Trash folder are deleted permanently.
 - You can't archive or move messages from the app yet, and drafts are not saved.
 - This is a debug build, which is fine for personal use.

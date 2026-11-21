@@ -2,6 +2,7 @@ package com.personal.mymail.ui
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -9,8 +10,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +27,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -41,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -65,12 +70,22 @@ fun MessageScreen(vm: MailViewModel, nav: NavHostController, messageId: Long) {
     var busyId by remember { mutableStateOf<Long?>(null) }
     var pendingSave by remember { mutableStateOf<File?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var loadingHtml by remember { mutableStateOf(false) }
+    var showPlain by remember { mutableStateOf(false) }
+    var showPictures by remember { mutableStateOf(false) }
     val deleting by vm.deleting.collectAsStateWithLifecycle()
 
     LaunchedEffect(messageId) {
-        message = vm.repo.getMessage(messageId)
+        val loaded = vm.repo.getMessage(messageId)
+        message = loaded
         attachments = vm.repo.attachments(messageId)
         vm.markRead(messageId)
+        // Messages saved by an older version only have plain text; get the formatted version once.
+        if (loaded != null && !loaded.htmlChecked) {
+            loadingHtml = true
+            message = vm.repo.ensureHtml(loaded)
+            loadingHtml = false
+        }
     }
 
     val saveLauncher = rememberLauncherForActivityResult(
@@ -119,6 +134,22 @@ fun MessageScreen(vm: MailViewModel, nav: NavHostController, messageId: Long) {
         } catch (_: ActivityNotFoundException) {
             scope.launch {
                 snackbar.showSnackbar("No app on this phone can open that kind of file. Try Save.")
+            }
+        }
+    }
+
+    /** Called when the user taps a link inside the message. */
+    fun openLink(url: String) {
+        val uri = Uri.parse(url)
+        when (uri.scheme?.lowercase()) {
+            "mailto" -> {
+                val to = Uri.decode(uri.schemeSpecificPart.substringBefore('?'))
+                nav.navigate("compose?mode=new&to=${Uri.encode(to)}")
+            }
+            "http", "https", "tel" -> try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            } catch (_: ActivityNotFoundException) {
+                scope.launch { snackbar.showSnackbar("No app on this phone can open that link.") }
             }
         }
     }
@@ -176,103 +207,149 @@ fun MessageScreen(vm: MailViewModel, nav: NavHostController, messageId: Long) {
 
         val recipientCount = extractEmails(m.toAddresses).size + extractEmails(m.ccAddresses).size
 
-        Column(
-            Modifier.padding(padding).fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp)
-        ) {
-            SelectionContainer {
-                Column {
-                    Text(m.subject, style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "${m.fromName} <${m.fromAddress}>",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                    if (m.toAddresses.isNotBlank()) {
-                        Text(
-                            "To: ${m.toAddresses}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (m.ccAddresses.isNotBlank()) {
-                        Text(
-                            "Cc: ${m.ccAddresses}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Text(
-                        formatFullDate(m.date),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+        val colors = MaterialTheme.colorScheme
+        val hasHtml = m.htmlBody.isNotBlank()
+        val useHtml = hasHtml && !showPlain
+        val hasRemote = remember(m.htmlBody) { hasRemoteContent(m.htmlBody) }
+        val foreground = colorToCss(colors.onSurface.toArgb())
+        val linkColor = colorToCss(colors.primary.toArgb())
+        val backgroundArgb = colors.background.toArgb()
+        val pageHtml = remember(m.id, m.body, m.htmlBody, useHtml, foreground, linkColor, backgroundArgb) {
+            if (useHtml) {
+                wrapEmailHtml(m.htmlBody)
+            } else {
+                plainTextToHtml(m.body, foreground, linkColor, colorToCss(backgroundArgb))
             }
+        }
 
-            Row(
-                Modifier.padding(top = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            // Header: scrolls by itself if it gets tall, so the message always has room below.
+            Column(
+                Modifier.heightIn(max = 280.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                OutlinedButton(onClick = { nav.navigate("compose?mode=reply&msg=${m.id}") }) {
-                    Text("Reply")
-                }
-                if (recipientCount > 1) {
-                    OutlinedButton(onClick = { nav.navigate("compose?mode=replyall&msg=${m.id}") }) {
-                        Text("Reply all")
+                SelectionContainer {
+                    Column {
+                        Text(m.subject, style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "${m.fromName} <${m.fromAddress}>",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                        if (m.toAddresses.isNotBlank()) {
+                            Text(
+                                "To: ${m.toAddresses}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (m.ccAddresses.isNotBlank()) {
+                            Text(
+                                "Cc: ${m.ccAddresses}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            formatFullDate(m.date),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
-                OutlinedButton(onClick = { nav.navigate("compose?mode=forward&msg=${m.id}") }) {
-                    Text("Forward")
-                }
-            }
 
-            if (attachments.isNotEmpty()) {
-                HorizontalDivider(Modifier.padding(vertical = 12.dp))
-                Text("Attachments", style = MaterialTheme.typography.titleSmall)
-                attachments.forEach { att ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.AttachFile, contentDescription = null)
-                        Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                            Text(att.name, maxLines = 1)
-                            val size = formatSize(att.size)
-                            if (size.isNotEmpty()) {
-                                Text(
-                                    size,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                Row(
+                    Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(onClick = { nav.navigate("compose?mode=reply&msg=${m.id}") }) {
+                        Text("Reply")
+                    }
+                    if (recipientCount > 1) {
+                        OutlinedButton(onClick = { nav.navigate("compose?mode=replyall&msg=${m.id}") }) {
+                            Text("Reply all")
+                        }
+                    }
+                    OutlinedButton(onClick = { nav.navigate("compose?mode=forward&msg=${m.id}") }) {
+                        Text("Forward")
+                    }
+                    if (hasHtml) {
+                        TextButton(onClick = { showPlain = !showPlain }) {
+                            Text(if (showPlain) "Show formatted" else "Show plain text")
+                        }
+                    }
+                }
+
+                if (attachments.isNotEmpty()) {
+                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                    Text("Attachments", style = MaterialTheme.typography.titleSmall)
+                    attachments.forEach { att ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.AttachFile, contentDescription = null)
+                            Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                                Text(att.name, maxLines = 1)
+                                val size = formatSize(att.size)
+                                if (size.isNotEmpty()) {
+                                    Text(
+                                        size,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (busyId == att.id) {
+                                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                            } else {
+                                TextButton(
+                                    enabled = busyId == null,
+                                    onClick = { withFile(att) { file -> openFile(file, att.mimeType) } }
+                                ) { Text("Open") }
+                                TextButton(
+                                    enabled = busyId == null,
+                                    onClick = {
+                                        withFile(att) { file ->
+                                            pendingSave = file
+                                            saveLauncher.launch(att.name)
+                                        }
+                                    }
+                                ) { Text("Save") }
                             }
                         }
-                        if (busyId == att.id) {
-                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                        } else {
-                            TextButton(
-                                enabled = busyId == null,
-                                onClick = { withFile(att) { file -> openFile(file, att.mimeType) } }
-                            ) { Text("Open") }
-                            TextButton(
-                                enabled = busyId == null,
-                                onClick = {
-                                    withFile(att) { file ->
-                                        pendingSave = file
-                                        saveLauncher.launch(att.name)
-                                    }
-                                }
-                            ) { Text("Save") }
-                        }
                     }
                 }
             }
 
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            SelectionContainer {
-                Text(m.body, style = MaterialTheme.typography.bodyMedium)
+            HorizontalDivider()
+            if (loadingHtml) LinearProgressIndicator(Modifier.fillMaxWidth())
+
+            if (useHtml && hasRemote && !showPictures) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Pictures from the internet are hidden.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { showPictures = true }) { Text("Show pictures") }
+                }
             }
+
+            // The message itself. Formatted mail is always drawn on white, the way senders design it.
+            EmailWebView(
+                html = pageHtml,
+                allowRemote = useHtml && showPictures,
+                backgroundColor = if (useHtml) android.graphics.Color.WHITE else backgroundArgb,
+                onLink = { openLink(it) },
+                modifier = Modifier.weight(1f).fillMaxWidth()
+            )
         }
     }
 }

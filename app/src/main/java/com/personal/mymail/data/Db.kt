@@ -113,6 +113,9 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE accountId = :accountId AND folder = :folder")
     suspend fun deleteFolder(accountId: Long, folder: String)
 
+    @Query("UPDATE messages SET htmlBody = :html, htmlChecked = 1 WHERE id = :id")
+    suspend fun setHtml(id: Long, html: String)
+
     @Query("SELECT * FROM messages WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<Long>): List<MailMessage>
 
@@ -205,9 +208,20 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
     }
 }
 
+/**
+ * Version 3 -> 4: messages can keep their formatted (HTML) version.
+ * Older messages get it from the server the first time they are opened.
+ */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE messages ADD COLUMN htmlBody TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE messages ADD COLUMN htmlChecked INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 @Database(
     entities = [Account::class, MailFolder::class, MailMessage::class, AttachmentInfo::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -226,7 +240,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "mymail.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
             }
     }
 }

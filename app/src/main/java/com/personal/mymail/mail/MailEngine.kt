@@ -78,6 +78,13 @@ class FetchedMessage(val message: MailMessage, val attachments: List<AttachmentI
  */
 object MailEngine {
 
+    /**
+     * Android can only read about 2 MB per database row, so very large messages are cut down:
+     * a formatted version over this size is dropped (the plain text is shown instead).
+     */
+    const val MAX_HTML_CHARS = 500_000
+    private const val MAX_BODY_CHARS = 100_000
+
     private const val CONNECT_TIMEOUT_MS = "15000"
     private const val READ_TIMEOUT_MS = "30000"
 
@@ -231,8 +238,12 @@ object MailEngine {
         val from = m.from?.firstOrNull() as? InternetAddress
         val fromAddress = from?.address ?: ""
         val fromName = from?.personal?.takeIf { it.isNotBlank() } ?: fromAddress
+        var html = ""
         val body = try {
-            extractBody(m)
+            val texts = Texts()
+            collect(m, texts)
+            html = texts.html?.takeIf { it.isNotBlank() && it.length <= MAX_HTML_CHARS } ?: ""
+            bodyText(texts)
         } catch (e: Exception) {
             "(Could not read this message: ${e.message})"
         }
@@ -264,7 +275,9 @@ object MailEngine {
             snippet = body.replace(Regex("\\s+"), " ").trim().take(140),
             body = body,
             isRead = isRead,
-            hasAttachments = attachments.isNotEmpty()
+            hasAttachments = attachments.isNotEmpty(),
+            htmlBody = html,
+            htmlChecked = true
         )
         return FetchedMessage(message, attachments)
     }
@@ -274,14 +287,36 @@ object MailEngine {
         var html: String? = null
     }
 
-    private fun extractBody(part: Part): String {
-        val texts = Texts()
-        collect(part, texts)
+    /** The plain-text version of a message, made from the formatted version if there is no plain one. */
+    private fun bodyText(texts: Texts): String {
         val plain = texts.plain?.trim()
-        if (!plain.isNullOrEmpty()) return plain
-        val html = texts.html
-        if (!html.isNullOrBlank()) return htmlToText(html)
-        return "(no text content)"
+        val text = when {
+            !plain.isNullOrEmpty() -> plain
+            !texts.html.isNullOrBlank() -> htmlToText(texts.html!!)
+            else -> "(no text content)"
+        }
+        return if (text.length > MAX_BODY_CHARS) text.take(MAX_BODY_CHARS) + "\n\n[Message cut short]" else text
+    }
+
+    /**
+     * Downloads just the formatted (HTML) version of one message.
+     * Returns an empty string if the message has none or it is too large to keep.
+     */
+    fun fetchHtml(store: Store, folderName: String, uid: String): String {
+        val folder = store.getFolder(folderName)
+        folder.open(Folder.READ_ONLY)
+        try {
+            val message = findByUid(folder, uid)
+                ?: throw IOException("That message is no longer on the server.")
+            val texts = Texts()
+            collect(message, texts)
+            return texts.html?.takeIf { it.isNotBlank() && it.length <= MAX_HTML_CHARS } ?: ""
+        } finally {
+            try {
+                folder.close(false)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private fun collect(part: Part, out: Texts) {

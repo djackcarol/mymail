@@ -51,17 +51,19 @@ fun MyMailApp(
             MessageScreen(vm, nav, entry.arguments?.getLong("id") ?: 0L)
         }
         composable(
-            "compose?mode={mode}&msg={msg}",
+            "compose?mode={mode}&msg={msg}&to={to}",
             arguments = listOf(
                 navArgument("mode") { type = NavType.StringType; defaultValue = "new" },
-                navArgument("msg") { type = NavType.LongType; defaultValue = -1L }
+                navArgument("msg") { type = NavType.LongType; defaultValue = -1L },
+                navArgument("to") { type = NavType.StringType; defaultValue = "" }
             )
         ) { entry ->
             ComposeScreen(
                 vm = vm,
                 nav = nav,
                 mode = entry.arguments?.getString("mode") ?: "new",
-                messageId = entry.arguments?.getLong("msg") ?: -1L
+                messageId = entry.arguments?.getLong("msg") ?: -1L,
+                presetTo = entry.arguments?.getString("to") ?: ""
             )
         }
     }

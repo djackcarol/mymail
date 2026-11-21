@@ -67,7 +67,11 @@ data class MailMessage(
     val isRead: Boolean = false,
     val hasAttachments: Boolean = false,
     /** Read on this phone, but the server has not been told yet. */
-    val readPending: Boolean = false
+    val readPending: Boolean = false,
+    /** The formatted (HTML) version of the message, or empty if it has none. */
+    val htmlBody: String = "",
+    /** False for messages saved before HTML was kept; they fetch it from the server when opened. */
+    val htmlChecked: Boolean = false
 )
 
 @Entity(
